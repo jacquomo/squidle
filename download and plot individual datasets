@@ -1,0 +1,215 @@
+###Example for extracting data from individual datasets in SQ+ including segments from SAMBot
+##Written by jacquomo.monk@utas.edu.au
+##Date 15/07/2024
+
+##Clean up environment
+rm(list=ls())
+
+##Load required packages
+# if (!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+# if (!require(httr)) install.packages("httr", repos = "http://cran.us.r-project.org")
+# if (!require(jsonlite)) install.packages("jsonlite", repos = "http://cran.us.r-project.org")
+
+##Loading libraries
+library(tidyverse)
+library(httr)
+library(jsonlite)
+
+##Set your working directory
+setwd("C:/Users/jmonk1/Dropbox/12_Code")#Change to your path
+
+##1.0 Creating URL Squidle
+##Load API token
+api_token <- read_delim("YOUR_SQUIDLE_API_TOKEN.txt", delim = " ", col_names = FALSE) %>%
+  pull() #Replace with own API token file in secure folder. You will need to make your own API token- see token link under My Data on SQ+ Homepage. Copy and save this as a text file somewhere safe (don't share it)
+
+##Set Base url for SQ+
+base_url <- "https://squidle.org/api/annotation_set/"
+
+##Set annotation individual annotation set you want to extract.
+ID <- "13567/export?"  # This numeric can be changed for whichever dataset ID you want to download
+pixels<- "&pixel_width=1360&pixel_height=1024" # These numeric values represent the height and width of sirius image. They can be changed for whichever platform you want. They can technically be generated automacticall
+
+
+##Set the remaining filters you want to apply to the export
+template <- "template=dataframe.json&disposition=attachment&include_columns=[%22label.id%22,%22label.uuid%22,%22label.name%22,%22label.lineage_names%22,%22comment%22,%22needs_review%22,%22tag_names%22,%22updated_at%22,%22point.id%22,%22point.x%22,%22point.y%22,%22point.t%22,%22point.data%22,%22point.pixels%22,%22point.is_targeted%22,%22point.media.id%22,%22point.media.key%22,%22point.media.path_best%22,%22point.pose.timestamp%22,%22point.pose.lat%22,%22point.pose.lon%22,%22point.pose.alt%22,%22point.pose.dep%22,%22point.media.deployment.key%22,%22point.media.deployment.campaign.key%22,%22point.media.deployment.name%22,%22point.media.deployment.campaign.name%22]&"
+filters <- "f={%22operations%22:[{%22module%22:%22pandas%22,%22method%22:%22json_normalize%22},{%22method%22:%22sort_index%22,%22kwargs%22:{%22axis%22:1}}]}&q={%22filters%22:[]}&translate={%22vocab_registry_keys%22:[%22worms%22,+%22caab%22,+%22catami%22]}"
+##Generate full url#Generate full url
+full_url = paste(base_url,
+                 ID,
+                 template,
+                 filters,
+                 pixels,
+                 sep="")
+
+##Check the full url looks ok
+full_url
+
+##2.0 Download data
+##Hit the API to get data from group. Warning this can take a while if you have a large number of annotations in your group
+res <- GET(URLencode(full_url),add_headers("X-auth-token"= api_token))
+
+##Flatten you json results into a dataframe. 
+json <- jsonlite::fromJSON(content(res, 'text'), simplifyVector = TRUE, flatten = TRUE)
+# json- This is the bit where you need to access the polygon vertices before you flatten to a dataframe of points
+
+##Convert to dataframe
+df<-as.data.frame(json$objects)%>%
+  # dplyr::mutate(year=str_sub(point.media.key, 4, 7))%>%#extract year if needed
+  glimpse()##Look at result
+
+##Tally number of images per year- only needed when you know the dataset
+summary<-df%>%
+  group_by(year)%>% #by year
+  # group_by(point.media.deployment.name)%>% #by transect if needed
+  dplyr::summarise(n= length(unique(point.media.key)))%>%
+  dplyr::ungroup()%>%
+  view()
+
+### There are lots of API endpoints within SQUIDLE+. See https://squidle.org/api/help?template=api_help_page.html
+### For example, data can be harmonized using semantic translation tools prior to being downloaded.
+
+#3.0 Now let's format the data into %cover as well as wide format 
+##Step 1: select out metadata
+metadata<-df%>%
+  dplyr::select(point.media.key,point.media.path_best:point.pose.lon,point.pose.dep,point.media.path_best,point.media.deployment.name,year)%>%
+  dplyr::distinct(point.media.key,.keep_all = TRUE)%>%
+  dplyr::select(point.media.key,point.pose.lat,point.pose.lon,point.pose.dep,point.media.path_best,point.media.deployment.name,year)%>%
+  glimpse()
+
+##Step 2.1: Select out WOI annotations from points
+###Keep WOI labels
+woi.dat<-df%>%
+  dplyr::filter(is.na(point.x))%>%#keeps only whole of frame labels
+  dplyr::select("label.lineage_names","tag_names","point.media.key")%>%
+  glimpse()
+
+###Check if we are missing WOI annotations
+woi.dat.check<-woi.dat%>%
+  dplyr::group_by(point.media.key)%>%
+  dplyr::summarise(n= n())%>%
+  dplyr::ungroup()%>%
+  dplyr::filter(n<1)%>%
+  glimpse() 
+####Should have 0 rows
+####note some of this particular dataset is missing WOI labels
+
+##Step 2.2 Calc percent cover on reef
+p.dat<-df%>%
+  dplyr::filter(!is.na(point.x))%>% #filters out any whole of frame labels
+  dplyr::select("label.lineage_names":"point.pose.alt","tag_names")%>%
+  glimpse()
+
+
+###Run a check and see that we only have 25 points per image for AUV- note 2011 data has only 20 points
+df.check<-p.dat%>%
+  dplyr::group_by(point.media.key)%>%
+  dplyr::summarise(n= n())%>%
+  dplyr::ungroup()%>%
+  dplyr::arrange(desc(n))%>%
+  dplyr::filter(n>25| n<25)%>% #we have only 25points
+  dplyr::left_join(metadata,by="point.media.key")%>%
+  view() #Should return empty check
+
+###Note that some platforms use different points eg rls usually use 5 points
+
+####So best practice is to calc how many points per image and use this to calc % cover
+###Calc number of points for each image
+nb.pt<-p.dat%>%
+  # dplyr::group_by(point.media.key)%>%
+  # sample_n(25,replace=FALSE)%>%
+  # dplyr::ungroup()%>%
+  dplyr::group_by(point.media.key)%>%
+  dplyr::summarise(n.pts= n())%>%
+  view() #Should be 25 across the board
+
+###Run sum check to see if we have NA in the morphospecies (label.lineage_names)
+df.check.na.summary<-p.dat%>%
+  dplyr::filter(.,is.na(label.lineage_names))%>%
+  dplyr::group_by(point.media.key)%>%
+  dplyr::summarise(n.pts= n())%>%
+  dplyr::ungroup()%>%
+  view()
+                                                                                                                                                                                                      
+####Should return empty, but sometimes some images are skipped (e.g."sand" images) when annotating, particularly if targeting reef
+####Just check if all are in this case either 20 or 25 (or whatever is correct number of points being used to annotation) 
+
+###Check how many "sand" images (i.e.images with 80% or more soft sediment points)
+sand <- p.dat %>% 
+  # dplyr::group_by(point.media.key)%>%
+  # sample_n(25,replace=FALSE)%>%
+  # dplyr::ungroup()%>%
+  dplyr::mutate(grouping=paste(point.media.key,label.lineage_names, sep=","))%>%
+  dplyr::group_by(grouping)%>%
+  dplyr::summarise(n.sand.pts= n())%>%
+  dplyr::ungroup()%>%
+  tidyr::separate(grouping,c("point.media.key","label.lineage_names"),",")%>%
+  dplyr::filter(grepl("Unconsolidated",label.lineage_names,ignore.case = TRUE))%>%
+  dplyr::group_by(point.media.key)%>%
+  dplyr::summarise(n.sand.pts= sum(n.sand.pts))%>%
+  dplyr::ungroup()%>%
+  dplyr::select("point.media.key","n.sand.pts")%>%#hash out if running below code
+  dplyr::arrange(desc(n.sand.pts))%>%
+  dplyr::filter(n.sand.pts >= max(n.sand.pts)*0.8 )%>% #we can change this whatever if 80% is too high
+  # dplyr::select(point.media.key )
+  dplyr::mutate(habitat="Sediment")%>%
+  dplyr::select("point.media.key","n.sand.pts","habitat")%>%
+  left_join(metadata,by="point.media.key")%>%
+  view()
+
+###Now format up dataframe for %cover on reef
+
+####Long format
+###Things to consider- tags of "Unattached", "Dead", "Bleached","Epiphyte","Epiphyte,Dead"         
+####Here, we'll filter out "Unattached", Dead, Epiphyte,Dead
+###Also need to remove mobile organisms ("Fishes","Echinoderms","Molluscs") and "Unscorable" images/points
+
+pc.dat<-p.dat%>%
+  filter(!grepl("Unattached|Dead|Epiphyte,Dead", tag_names, ignore.case = TRUE)) %>%#get rid of unattached or Dead organism
+  filter(!grepl("Fishes|Molluscs|Echinoderms", label.lineage_names, ignore.case = TRUE)) %>%#get rid of mobiles images/points
+  filter(!grepl("Unscorable", label.lineage_names, ignore.case = TRUE))%>%#get rid of unscorable images/points
+  dplyr::mutate(grouping=paste(point.media.key,label.lineage_names, sep=","))%>%
+  dplyr::group_by(grouping)%>%
+  dplyr::summarise(n= n())%>%
+  tidyr::separate(grouping,c("point.media.key","label.lineage_names"),",")%>%
+  dplyr::left_join(sand,by="point.media.key")%>%
+  dplyr::left_join(nb.pt,by="point.media.key")%>%
+  dplyr::mutate(pc=n/n.pts*100)%>% #percent cover of all annotated points
+  dplyr::mutate(n.sand.pts=ifelse(is.na(n.sand.pts),0,n.sand.pts))%>%
+  dplyr::mutate(pcr=(n/(n.pts-n.sand.pts))*100)%>%  #percent cover of reef points
+  dplyr::mutate(pcr=ifelse(grepl("Unconsolidated",label.lineage_names,ignore.case = TRUE),0,pcr))%>% #hack to make all sediment classes 0 in reef cover
+  dplyr::select("point.media.key","label.lineage_names","n","n.sand.pts","habitat","pc","pcr")%>%
+  dplyr::left_join(metadata,by="point.media.key")%>%
+  dplyr::mutate(habitat=ifelse(habitat%in%NA,"Reef",habitat))%>% #classify reef images (inverse of sand)
+  dplyr::mutate(MERI.Depth = cut(point.pose.dep, breaks = c(0, 30, 70, 200, 700, 2000, 4000), 
+                                  labels = c("Shallow (0-30m)", "Mesophotic (30-70m)", "Rariphotic (70-200m)", "Upper-slope (200-700m)", 
+                                             "Mid-slope (700-2000m)", "Lower-slope (2000-4000m"))) %>% #There is also an abyss class but nothing in SQ+ at that range
+  view()
+
+###Check we havent got something dodge going on with %cover calcs
+max(pc.dat$pc) #check max 100% cover
+min(pc.dat$pc) #check min not less than 0% cover
+max(pc.dat$pcr) #check max 100% cover. 
+min(pc.dat$pcr) #check min  not less than 0% cover
+unique(pc.dat$label.lineage_names)
+
+####Wide format
+pc.dat.wide<-pc.dat%>%
+  group_by(point.media.key, label.lineage_names)%>%
+  dplyr::summarise(sum(pcr))%>%
+  spread(key=label.lineage_names, value = `sum(pcr)`, fill = 0)%>%
+  left_join(metadata, by=c("point.media.key"="point.media.key")) %>% 
+  distinct(.,"point.media.key",.keep_all=TRUE)%>%
+  dplyr::select(!c(`"point.media.key"`)) %>%
+  janitor::clean_names() %>%
+  #filter out mobile species and sediment classes
+  # dplyr::select(!c("biota_molluscs_gastropods","biota_echinoderms_sea_stars_asterodiscides_truncatus":"biota_fishes_elasmobranchs_sharks_orectolobus_maculatus"))%>%
+  glimpse()
+####Have filtered out mobiles and sediment classes
+
+####Now have a dataframe with everything in it including pcr == % cover on reef and pc == percent cover in entire   
+#Good idea to write this data out
+write.csv(pc.dat,"YOUR_DATAFRAME.csv", row.names = F)
+
+####Now time to do some plotting
+####You can also look and bringing your woi images that we filtered out above
