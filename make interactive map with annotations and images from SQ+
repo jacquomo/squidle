@@ -1,0 +1,137 @@
+###Example to extract images and annotations and plot on base map
+###Written by jacquomo.monk@utas.edu.au
+###Date:15/07/2024
+
+rm(list=ls())
+
+library(tidyverse)
+library(leaflet)
+library(leaflet.extras)
+library(magick)
+library(htmlwidgets)
+library(glue)
+library(httr)
+library(jsonlite)
+
+##1.0 Creating URL Squidle
+##Load API token
+api_token <- read_delim("C:/Users/jmonk1/Dropbox/12_Code/SQUIDLE_API_TOKEN.txt", delim = " ", col_names = FALSE) %>%
+  pull() #Replace with own API token file in secure folder. You will need to make your own API token- see token link under My Data on SQ+ Homepage. Copy and save this as a text file somewhere safe (don't share it)
+
+##Set Base url for SQ+
+base_url <- "https://squidle.org/api/annotation_set/"
+
+##Set annotation individual annotation set you want to extract.
+ID <- "15800/export?"  # This numeric can be changed for whichever dataset ID you want to download
+
+##Set remaining filters you want to apply to the export
+template <- "template=dataframe.json&disposition=attachment&include_columns=[%22label.id%22,%22label.uuid%22,%22label.name%22,%22label.lineage_names%22,%22comment%22,%22needs_review%22,%22tag_names%22,%22updated_at%22,%22point.id%22,%22point.x%22,%22point.y%22,%22point.t%22,%22point.data%22,%22point.pixels%22,%22point.is_targeted%22,%22point.media.id%22,%22point.media.key%22,%22point.media.path_best%22,%22point.pose.timestamp%22,%22point.pose.timestamp_local%22,%22point.pose.lat%22,%22point.pose.lon%22,%22point.pose.alt%22,%22point.pose.dep%22,%22point.media.deployment.key%22,%22point.media.deployment.campaign.key%22,%22point.media.deployment.name%22,%22point.media.deployment.campaign.name%22]&"
+filters <- "f={%22operations%22:[{%22module%22:%22pandas%22,%22method%22:%22json_normalize%22},{%22method%22:%22sort_index%22,%22kwargs%22:{%22axis%22:1}}]}&q={%22filters%22:[]}&translate={%22vocab_registry_keys%22:[%22worms%22,+%22caab%22,+%22catami%22]}"
+
+##Generate full url#Generate full url
+full_url = paste(base_url,
+                 ID,
+                 template,
+                 filters,
+                 sep="")
+
+##Check the full url looks ok
+full_url
+
+##2.0 Download data
+##Hit the API to get data from group. Warning this can take a while if you have a large number of annotations in your group
+res <- GET(URLencode(full_url),add_headers("X-auth-token"= api_token))
+
+##Flatten you json results into a dataframe. 
+json <- jsonlite::fromJSON(content(res, 'text'), simplifyVector = TRUE, flatten = TRUE)
+# json- This is the bit where you need to access the polygon vertices before you flatten to a dataframe of points
+
+##Convert to dataframe
+df<-as.data.frame(json$objects)%>%
+  # dplyr::mutate(year=str_sub(point.media.key, 4, 7))%>%#extract year if needed
+  dplyr::filter(!needs_review%in%c("TRUE"))%>%#get rid of uncertain images (flagged for review)
+  glimpse()##Look at result
+
+##Function to get image dimensions
+get_image_dimensions <- function(image_path) {
+  img <- image_read(image_path)
+  info <- image_info(img)
+  return(list(width = info$width, height = info$height))
+}
+
+##Add image dimensions to the dataset
+df <- df %>%
+  rowwise() %>%
+  mutate(dimensions = list(get_image_dimensions(point.media.path_best))) %>%
+  unnest_wider(dimensions) %>%
+  mutate(
+    pixel.x = point.x * width,
+    pixel.y = point.y * height
+  )
+
+##Assuming point.pose.timestamp_local is in POSIXct format, you can convert it directly
+df$point.pose.timestamp_local <- as.POSIXct(df$point.pose.timestamp_local / 1000, origin = "1970-01-01")
+
+##Define maximum popup dimensions
+max_width <- 300
+max_height <- 300
+
+##Define the URL for the bathymetry data. Here we are getting data from the IMAS geoserver
+bathymetryUrl <- "https://geoserver.imas.utas.edu.au/geoserver/seamap/wms"
+
+##Create leaflet map
+map <- leaflet() %>%
+  addProviderTiles(providers$Esri.WorldImagery) %>% #Add satellite base map from ESRI
+  addProviderTiles("Esri.WorldImagery", group = "Satellite", options = tileOptions(minZoom = 1, maxZoom = 19)) %>%
+  addWMSTiles(
+    baseUrl = bathymetryUrl,
+    layers = "seamap:Aus_bathy_grid_250m", #A#DD Australian 250m resolution bathmetry
+    options = WMSTileOptions(format = "image/png", transparent = TRUE, maxZoom = 12),
+    group = "Coarse Bathymetry"
+  ) %>%
+  addWMSTiles(
+    baseUrl = bathymetryUrl,
+    layers = "seamap:bathymetry_AMP_grp_shelf", ##ADD fine-scale bathmetry
+    options = WMSTileOptions(format = "image/png", transparent = TRUE, minZoom = 12),
+    group = "Fine Bathymetry"
+  ) %>%
+  addWMSTiles(
+    baseUrl = bathymetryUrl,
+    layers = "seamap:SeamapAus_BOUNDARIES_AMP_ZONE", ##Add Australian Marine Park boundaries
+    options = WMSTileOptions(format = "image/png", transparent = TRUE, opacity = 0.5),
+    group = "AMP Zones"
+  ) %>%
+  addLayersControl(baseGroups = c("Esri.WorldImagery"), overlayGroups = c("Coarse Bathymetry","Fine Bathymetry","AMP Zones")) %>% ##Set order of layers
+  addCircleMarkers( ##Add points from SQUIDLE including images as pop-ups
+    data = df,
+    lng = ~point.pose.lon,
+    lat = ~point.pose.lat,
+    popup = ~{
+      depth_meters <- round(point.pose.dep)
+      year <- format(as.Date(point.pose.timestamp_local), "%Y")
+      aspect_ratio <- width / height
+      popup_width <- ifelse(aspect_ratio > 1, max_width, max_height * aspect_ratio)
+      popup_height <- ifelse(aspect_ratio > 1, max_width / aspect_ratio, max_height)
+      circle_radius <- 7 / min(popup_width / width, popup_height / height)
+      full_image_url <- point.media.path_best  # Assuming this is the URL to the full-resolution image
+      glue(
+        '<svg width="{popup_width}" height="{popup_height}" viewBox="0 0 {width} {height + 40}" preserveAspectRatio="xMidYMid meet" style="position: relative;">',
+        '<a href="{full_image_url}" target="_blank"><image xlink:href="{point.media.path_best}" x="0" y="0" width="{width}" height="{height}"/></a>',
+        '<circle cx="{pixel.x}" cy="{pixel.y}" r="{circle_radius}" fill="none" stroke="red" stroke-width="8"/>',
+        '<text x="{width - 40}" y="{height - 20}" text-anchor="end" font-size="80" font="Bold" fill="yellow">Click on image to see view full-resolution image</text>',
+        '<text x="{width - 20}" y="70" text-anchor="end" font-size="80" font="Bold" fill="yellow">Depth: {depth_meters} m</text>',
+        '<text x="{width - 20}" y="160" text-anchor="end" font-size="80" font="Bold" fill="yellow">Year: {year}</text>',
+        '</svg>'
+      )
+    },
+    radius = 5,
+    color = "darkred",
+    fillOpacity = 0.7
+  )
+
+map #view your interactive map
+
+
+##Save the map as an HTML file this can be shared as a self contained file
+saveWidget(map, "PATH\\TO\\leaflet_map.html", selfcontained = TRUE) #Set to your own directory
+
