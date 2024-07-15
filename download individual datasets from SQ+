@@ -193,7 +193,7 @@ max(pc.dat$pcr) #check max 100% cover.
 min(pc.dat$pcr) #check min  not less than 0% cover
 unique(pc.dat$label.lineage_names)
 
-####Wide format
+####Alternative wide format
 pc.dat.wide<-pc.dat%>%
   group_by(point.media.key, label.lineage_names)%>%
   dplyr::summarise(sum(pcr))%>%
@@ -209,7 +209,7 @@ pc.dat.wide<-pc.dat%>%
 
 ####Now have a dataframe with everything in it including pcr == % cover on reef and pc == percent cover in entire   
 #Good idea to write this data out
-write.csv(pc.dat,"YOUR_DATAFRAME.csv", row.names = F)
+write.csv(pc.dat,"YOUR_DATAFRAME.csv", row.names = F) #change to suit
 
 ####Now time to do some plotting
 ####You can also look and bringing your woi images that we filtered out above
