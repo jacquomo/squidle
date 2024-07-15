@@ -12,7 +12,6 @@ A full list of API endpoints can be found at https://squidle.org/api/help?templa
 Reporting Issues:
 If you encounter any errors or issues with the R code, please report them to jacquomo.monk@utas.edu.au.
 
-License:
 This project is licensed under the MIT License:
 
 Copyright (c) 2024 Jacquomo Monk
