@@ -1,13 +1,15 @@
-SQUIDLE+ API Integration for R:
-This repository provides basic API calls to SQUIDLE+ to download annotations and images for summarizing using R.
+This code base is for:
+
+1) Extracting still images from BOSS, BRUV and other video platforms and formatting for upload into SQUIDLE+ using R. It provides example workflows to create folder structures and image name convention ready for ingestion into R.
+
+2) Extracting annotation data from SQUIDLE+ API using R. This repository provides basic API calls to SQUIDLE+ to download annotations and images for summarizing using R.
+A full list of API endpoints can be found at https://squidle.org/api/help?template=api_help_page.html
 
 Getting Started:
 1. Prerequisites
 Ensure you have R installed on your system. You will also need the httr, jsonlite, tidyverse, leaflet, leaflet.extras,
 magick, htmlwidgets, glue packages. 
 
-2. API Endpoints
-A full list of API endpoints can be found at https://squidle.org/api/help?template=api_help_page.html
 
 Reporting Issues:
 
