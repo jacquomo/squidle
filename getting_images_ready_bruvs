@@ -1,0 +1,463 @@
+### Creating a folder structure and formatting habitat images from BRUV imagery
+## Written by jacquomo.monk@utas.edu.au
+##1.0 Do some setup
+# Set the path to the folder containing the images
+# folder_path <- choose.dir() #navigate to folder
+
+#1.0 
+#3.0 Ok, lets get metadata sorted for SQ+
+library(tidyverse)
+library(openxlsx)
+
+funders<-read.xlsx("C:/temp1/Huveneers_Habitat_images/funding.xlsx",sheet = 1)
+
+meta<-read.csv("2016_GSV_Metadata.csv")%>%
+  mutate(key = Sample,
+         date = format(ymd(as.character(Date)), "%d/%m/%Y"),  # Convert YYYYMMDD to DD/MM/YYYY
+         Time = parse_date_time(Time, orders = c("H:M:S", "H:M"), tz = "Australia/Adelaide") %>%
+           with_tz("UTC") %>%
+           format("%H:%M:%S"),
+         timestamp_start	= paste(date, Time, sep = " "),
+         pose.lat = Latitude,
+         pose.lon	= Longitude,
+         pose.dep = Depth,
+         pose.data.inclusion_probability = "",
+         data.spatially_balanced	= "n",
+         data.camera_model = "GoPro Hero 3+",
+         data.contact.primary = "charlie.huveneers@flinders.edu.au",
+         data.contact.secondary = "tom.clarke@flinders.edu.au",
+         data.funder = "Holsworth Wildlife Research Endowment; Department for Environment and Water", #Add this in
+         # data.grant_no = "" #Add this in
+         )%>%
+  dplyr::select("key","timestamp_start":"data.funder")%>%
+  glimpse()
+
+
+#Lets do some basic checks to make sure everything looks right in metadata contents
+# 3.1. Check for missing values
+missing_values <- meta %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Column", values_to = "Missing_Count")
+
+print("Missing values per column:")
+print(missing_values)
+
+# 3.2. Check for duplicate rows
+duplicates <- meta %>%
+  filter(duplicated(.))
+
+if (nrow(duplicates) > 0) {
+  print("Duplicate rows found:")
+  print(duplicates)
+} else {
+  print("No duplicate rows found.")
+}
+
+# 3.3. Verify unique identifiers (if applicable)
+# Replace 'unique_id_column' with the name of the column that should have unique values
+if ("unique_id_column" %in% colnames(meta)) {
+  unique_ids <- meta %>%
+    count(unique_id_column) %>%
+    filter(n > 1)
+  
+  if (nrow(unique_ids) > 0) {
+    print("Non-unique identifiers found in 'unique_id_column':")
+    print(unique_ids)
+  } else {
+    print("All identifiers in 'unique_id_column' are unique.")
+  }
+} else {
+  print("Column 'unique_id_column' not found. Skipping unique identifier check.")
+}
+
+# 3.4. Check data types and ranges
+column_summary <- meta %>%
+  summarise(across(everything(), list(class = ~ class(.), min = ~ if(is.numeric(.)) min(., na.rm = TRUE) else NA, 
+                                      max = ~ if(is.numeric(.)) max(., na.rm = TRUE) else NA)))
+
+print("Column data types and ranges:")
+print(column_summary)
+
+# 3.5. Check for any empty or zero-length strings in character columns
+empty_strings <- meta %>%
+  summarise(across(where(is.character), ~ sum(. == "")))
+
+print("Empty strings in character columns:")
+print(empty_strings)
+
+# 3.6. Check for any empty or negative depth values
+if ("Depth" %in% colnames(meta)) {
+  depth_issues <- meta %>%
+    filter(is.na(Depth) | Depth < 0)
+  
+  if (nrow(depth_issues) > 0) {
+    print("Rows with empty or negative depth values in 'Depth':")
+    print(depth_issues)
+  } else {
+    print("No empty or negative depth values in 'Depth'.")
+  }
+} else {
+  print("Column 'Depth' not found in metadata.")
+}
+
+
+# # Make sure date/time is in UTC - changing from local
+# # Ensure the column exists
+# if ("Time" %in% colnames(meta)) {
+#   # Parse the "Time" column, ensuring it correctly handles NA values
+#   meta <- meta %>%
+#     mutate(
+#       Time = parse_date_time(Time, orders = c("H:M:S", "H:M"), tz = "Australia/Adelaide") %>%
+#         with_tz("UTC") %>%
+#         format("%H:%M:%S")
+#     )
+#   
+#   print("Converted timestamps to UTC:")
+#   glimpse(meta$Time)
+# } else {
+#   print("Column 'Time' not found in metadata.")
+# }
+
+write.csv(meta,"2016-11_GSV_monoBRUVs_Metadata_final.csv", row.names = FALSE)
+
+#1.0 Crop images----
+# # Install magick package if not already installed
+# if (!requireNamespace("magick", quietly = TRUE)) {
+#   install.packages("magick")
+# }
+
+# Load the magick library
+library(magick)
+
+
+# Convert all png files to jpg and output into full_res folder
+# Create a new folder called "full_res" within the specified folder path
+full_res_folder <- file.path(folder_path, "full_res")
+dir.create(full_res_folder, showWarnings = FALSE)
+
+# List all PNG files in the folder
+png_files <- list.files(paste(folder_path,"Habitat",sep = "\\"), pattern = "\\.png$", full.names = TRUE, recursive = TRUE)
+
+# Loop through each PNG file and convert it to JPG
+for (file in png_files) {
+  # Read the PNG file
+  img <- image_read(file)
+  
+  # Convert the image to JPG format
+  jpg_file <- file.path(paste(folder_path,"Habitat",sep = "\\"), gsub(".png$", ".jpg", basename(file)))
+  image_write(img, jpg_file)
+}
+
+
+##2.0 Rename images if needed
+# Set the path to the folder containing the JPG files
+image_path <- "C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\full_res"
+
+##Move all jpg files to full res folder
+# List all files in the folder
+files <- list.files(paste(folder_path,"Habitat",sep = "\\"), pattern = "\\.jpg$", full.names = TRUE)
+
+# Copy JPG files to the destination folder
+file.copy(files, image_path, overwrite = FALSE)
+
+
+# List all JPG files in the folder
+jpg_files <- list.files(image_path, pattern = ".jpg", full.names = TRUE)
+
+# Loop through each JPG file and rename it
+for (file in jpg_files) {
+  new_name <- gsub("Frey_", "202107_Freycinet_AMP_stereoBRUV_", basename(file))
+  file.rename(file, file.path(image_path, new_name))
+}
+
+# Path to the folder
+output_folder <- "C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\full_res"
+
+
+#3.0 Ok, lets get metadata sorted for SQ+
+library(tidyverse)
+meta<-read.csv("C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\202107_Freycinet_AMP_stereoBRUV_Metadata.csv")%>%
+  # mutate(site=paste("FI",key,sep="_"))%>%
+  glimpse()
+
+# Sample data frame
+jpg_files.df <- list.files(path = output_folder, pattern = "\\.jpg$", ignore.case = TRUE, full.names = TRUE, recursive = FALSE) %>%
+  as.data.frame() %>%
+  rename(image.path = ".") %>%
+  mutate(
+    image = str_extract(image.path, "[^/]+$"),
+    key = str_remove(image, "\\.jpg$"),
+    site = str_extract(key, "\\d+_\\d+"),
+    # site = if_else(str_detect(key, "EXP"), paste0("Exp_", site), site)
+    site = if_else(str_detect(key, "EXP"), paste0("EXP_", str_extract(site, "\\d+")), site)
+    ) %>%
+  left_join(meta, by = 'site') %>%
+  glimpse()
+
+
+# names(final.metadata)
+final.metadata<-jpg_files.df%>%
+  dplyr::mutate(timestamp_start=paste0(Date," ",Time," AEST"))%>%
+  dplyr::select("key","timestamp_start","pose.lat","pose.lon","pose.dep":"data.grant_no")%>%
+  # dplyr::mutate(pose.data.inclusion_probability = if_else(data.spatially_balanced == "N", " ", pose.data.inclusion_probability))%>%
+  glimpse()
+ 
+
+##Plot metadata to make sure it looks ok
+library(leaflet)
+# Create a Leaflet map
+leaflet(final.metadata) %>%
+  addTiles() %>%
+  addMarkers(lng = ~pose.lon, lat = ~pose.lat, label = ~key)
+
+
+write.csv(final.metadata,"C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\202107_Freycinet_AMP_stereoBRUV_Metadata_final.csv", row.names = F, na = "")
+
+
+
+###4.0 Create thumbnails
+# List all JPEG files in the input folder
+# input_folder <- choose.dir() #navigate to folder
+input_folder<-'C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\full_res'
+
+#Create output folder if it doesn't exist
+# output_folder <- file.path(folder_path, "thumbnails", "01_Crops")
+output_folder<-'C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\thumbnails'
+dir.create(output_folder, showWarnings = TRUE)  
+
+#Create list of full res images
+jpg_files <- list.files(input_folder, pattern = "\\.jpg$", full.names = TRUE, ignore.case = TRUE)
+
+# Loop through the JPEG files, resize, and save as thumbnails
+for (jpg_file in jpg_files) {
+  # Read the image
+  img <- image_read(jpg_file)
+  
+  # Calculate the thumbnail dimensions to ensure a maximum height of 350px
+  original_width <- image_info(img)$width
+  original_height <- image_info(img)$height
+  
+  thumbnail_height <- min(350, original_height)  # Ensure thumbnail_height is a maximum of 350px
+  thumbnail_width <- (thumbnail_height / original_height) * original_width  # Maintain the original aspect ratio
+  
+  # Resize the image
+  img_thumbnail <- image_scale(img, geometry = paste0(thumbnail_width, "x", thumbnail_height, "!"))
+  
+  # Extract the file name without extension
+  file_name <- tools::file_path_sans_ext(basename(jpg_file))
+  
+  # Save the thumbnail in the output folder
+  thumbnail_output_path <- file.path(output_folder, paste0(file_name, ".jpg"))
+  image_write(img_thumbnail, path = thumbnail_output_path, format = "jpeg")
+}
+
+
+
+
+##5.0 Now let's make deployment folder for each deployment, move these images into these folders and split metadata
+##Make new folders
+library(fs)
+
+# Assuming metadata is a data frame containing the metadata and site information
+metadata <- final.metadata%>%
+  rowwise() %>%
+  mutate(#site =str_extract(key, "\\d+_\\d+")) %>% #change alpha for each campaign
+  site = str_extract(key, "\\d+_\\d+"),
+  site = if_else(str_detect(key, "EXP"), paste0("EXP_", str_extract(site, "\\d+")), site))%>%
+  ungroup() %>%
+  glimpse()
+
+# Loop through unique sites
+unique_sites <- unique(metadata$site)
+
+
+path_to_folder<-"C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV"
+
+# Using 'unique_sites' to make folders based on site names with two subfolders full_res and thumbnails
+for (site in unique_sites) {
+  site_folder <- file.path(path_to_folder, site)
+  
+  # Create site folder if it doesn't exist
+  dir.create(site_folder, showWarnings = FALSE)
+  
+  # Create subfolders 'full_res' and 'thumbnails' inside site folder
+  full_res_folder <- file.path(site_folder, "full_res")
+  thumbnails_folder <- file.path(site_folder, "thumbnails")
+  
+  dir.create(full_res_folder, showWarnings = FALSE)
+  dir.create(thumbnails_folder, showWarnings = FALSE)
+}
+
+#Now move images from full_res to subfolders in deployment folders
+# Source folder
+source_folder <- "C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\full_res" #where the full res images area
+final.metadata<- read.csv("C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\202107_Freycinet_AMP_stereoBRUV_Metadata_final.csv")
+
+# Extract site from 'key' column in 'metadata'
+unique_imgs <- final.metadata %>%
+  rowwise() %>%
+  mutate(site = str_extract(key, "\\d+_\\d+"),
+         site = if_else(str_detect(key, "EXP"), paste0("EXP_", str_extract(site, "\\d+")), site)) %>% #Change alpha for each campaign
+  ungroup() %>%
+  dplyr::select(site, key) %>%
+  mutate(key = paste0(key, ".jpg")) %>%
+  glimpse()
+
+# Assuming path_to_folder is defined somewhere in your code
+path_to_folder <- "C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV"
+
+for (i in 1:nrow(unique_imgs)) {
+  site <- unique_imgs$site[i]
+  key <- unique_imgs$key[i]
+  
+  site_folder <- file.path(path_to_folder, site)
+  full_res_folder <- file.path(site_folder, "full_res")
+  
+  # Create site and full_res folders if they don't exist
+  if (!dir.exists(site_folder)) {
+    dir.create(site_folder, recursive = TRUE)
+    dir.create(full_res_folder, recursive = TRUE)
+  }
+  
+  # Move JPG files to site\\full_res folder
+  jpg_files <- list.files(source_folder, pattern = paste0("^", key, "$"), full.names = TRUE)
+  
+  for (file_path in jpg_files) {
+    # Extract file name from file path
+    file_name <- basename(file_path)
+    
+    # Move file to site\\full_res folder
+    if (!file.exists(file.path(full_res_folder, file_name))) {
+      file.rename(file_path, file.path(full_res_folder, file_name))
+    }
+  }
+}
+
+# Moving images from thumbnails to site folders
+path_to_folder <- "C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV"
+source_folder <- "C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV\\thumbnails"
+
+for (i in 1:nrow(unique_imgs)) {
+  site <- unique_imgs$site[i]
+  key <- unique_imgs$key[i]
+  
+  site_folder <- file.path(path_to_folder, site)
+  thumbnails_folder <- file.path(site_folder, "thumbnails")
+  
+  # Create site and thumbnails folders if they don't exist
+  if (!dir.exists(site_folder)) {
+    dir.create(site_folder, recursive = TRUE)
+    dir.create(thumbnails_folder, recursive = TRUE)
+  }
+  
+  # Move JPG files to site\\thumbnails folder
+  jpg_files <- list.files(source_folder, pattern = paste0("^", key, "$"), full.names = TRUE)
+  
+  for (file_path in jpg_files) {
+    # Extract file name from file path
+    file_name <- basename(file_path)
+    
+    # Move file to site\\thumbnails folder
+    if (!file.exists(file.path(thumbnails_folder, file_name))) {
+      file.rename(file_path, file.path(thumbnails_folder, file_name))
+    }
+  }
+}
+
+##Split metadata csv into each deployment folder
+for (site in unique_sites) {
+  # Subset metadata for the current site
+  site_metadata <- metadata[metadata$site == site, ]
+  
+  # Remove the site column
+  site_metadata <- site_metadata[, !names(site_metadata) %in% "site"]
+  
+  # Create a folder for the site if it doesn't exist
+  site_folder <- file.path("C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV", site) #change for each campaign
+  # if (!dir.exists(site_folder)) {
+  #   dir.create(site_folder)
+  # }
+  
+  # Write the subsetted metadata to a CSV file in the site folder
+  file_name <- paste0("202107_Freycinet_AMP_stereoBRUV", site, "_Metadata.csv") #Change for each campaign
+  write.csv(site_metadata, file.path(site_folder, file_name), row.names = FALSE)
+}
+# 
+# ##Copy all csvs from one directory to another maintaining folder structure
+# # Function to copy all CSV files from one directory to another maintaining folder structure
+# copy_csv_files <- function(source_dir, dest_dir) {
+#   # List all CSV files in the source directory
+#   csv_files <- list.files(source_dir, pattern = "\\.csv$", recursive = TRUE, full.names = TRUE)
+#   
+#   # Loop through each CSV file and copy it to the destination directory maintaining folder structure
+#   for (csv_file in csv_files) {
+#     # Create the corresponding destination file path
+#     dest_file <- file.path(dest_dir, sub("^.*?/", "", csv_file))
+#     
+#     # Create the destination directory if it doesn't exist
+#     dir.create(dirname(dest_file), recursive = TRUE, showWarnings = FALSE)
+#     
+#     # Copy the CSV file to the destination directory
+#     file.copy(csv_file, dest_file)
+#   }
+# }
+# 
+# # Source directory containing CSV files
+# source_dir <- "C:\\temp1\\202305_Murray_AMP\\IMAS_BOSS" #change for each campaign
+# 
+# # Destination directory where CSV files will be copied maintaining folder structure
+# dest_dir <- "C:\\temp1\\202305_Murray_AMP\\IMAS_BOSS" #change for each campaign
+# 
+# # Copy all CSV files from source directory to destination directory
+# copy_csv_files(source_dir, dest_dir)
+# 
+# 
+
+
+
+##Run some checks to makes sure each deployment folder has correct number of files 
+
+#Check files in folders
+# Define the path to the folder
+folder_path <- "C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV"
+
+# Function to count files by type in a directory
+count_files_by_type <- function(dir) {
+  files <- list.files(dir, full.names = TRUE, recursive = TRUE)
+  file_types <- tools::file_ext(files)
+  file_types <- ifelse(file_types == "", "No Extension", file_types)
+  file_type_counts <- table(file_types)
+  data.frame(File_Type = names(file_type_counts), Count = as.numeric(file_type_counts))
+}
+
+# Get a list of all directories in the specified folder
+dirs <- list.dirs(folder_path, full.names = TRUE, recursive = TRUE)
+
+# Loop through each directory and count the number of files by type
+files_count_by_type <- lapply(dirs, count_files_by_type)
+
+# Create a data frame with the folder names and file counts by type
+summary_df <- data.frame(
+  Folder = rep(dirs, sapply(files_count_by_type, nrow)),
+  do.call(rbind, files_count_by_type))%>%
+  view()
+
+#Hack to fix csv naming error 
+
+# file_path<-"C:\\temp1\\202107_Freycinet_AMP\\IMAS_stereoBRUV"
+file_path<-"R:\\TAFI\\Data\\CERF\\BRUVS Video\\202107_Freycinet\\IMAS_Data_Portal\\202107_Freycinet_AMP\\IMAS_stereoBRUV"
+
+# Get a list of all CSV files in the folders
+csv_files <- dir_ls(file_path, regexp = "\\.csv$", recurse = TRUE)
+# csv_files <- head(csv_files, -2)
+
+# Function to rename files
+rename_file <- function(old_name) {
+  new_name <- str_replace(old_name, "202107_Freycinet_AMP_stereoBRUV", "202107_Freycinet_AMP_stereoBRUV_")
+  file.rename(old_name, new_name)
+  return(new_name)
+}
+
+# Rename files using purrr::map
+new_names <- map(csv_files, rename_file)
+
