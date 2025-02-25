@@ -1,13 +1,26 @@
 ### Creating a folder structure and formatting habitat images from BRUV imagery
 ## Written by jacquomo.monk@utas.edu.au
+#load libraries
+library(tidyverse)
+library(openxlsx)
+library(magick)
+
 ##1.0 Do some setup
 # Set the path to the folder containing the images
-# folder_path <- choose.dir() #navigate to folder
+folder_path <- choose.dir() #navigate to folder
+
+
+## Set up some extra attribute values not in GlobalArchive but needed in SQUIDLE+
+#data.spatially_balanced- JM to add based on inc probs
+data.camera_model = "GoPro Hero10" #edit for your cameras
+data.contact.primary ="neville.barrett@utas.edu.au" #add email for your primary contact person
+data.contact.secondary = "jacquomo.monk@utas.edu.au" #add email for your secondary contact person	
+data.funder = "Parks Australia"	#add funder names. If multiple delimit by semicolon
+data.grant_no  = "DNP-MPA-2122-062"" #(optional) add relevant grant numbers. If multiple delimit by semicolon
 
 #1.0 
 #3.0 Ok, lets get metadata sorted for SQ+
-library(tidyverse)
-library(openxlsx)
+
 
 funders<-read.xlsx("C:/temp1/Huveneers_Habitat_images/funding.xlsx",sheet = 1)
 
@@ -21,8 +34,8 @@ meta<-read.csv("2016_GSV_Metadata.csv")%>%
          pose.lat = Latitude,
          pose.lon	= Longitude,
          pose.dep = Depth,
-         pose.data.inclusion_probability = "",
-         data.spatially_balanced	= "n",
+         pose.data.inclusion_probability = ,
+         data.spatially_balanced	=  ifelse( """n",
          data.camera_model = "GoPro Hero 3+",
          data.contact.primary = "charlie.huveneers@flinders.edu.au",
          data.contact.secondary = "tom.clarke@flinders.edu.au",
@@ -127,7 +140,7 @@ write.csv(meta,"2016-11_GSV_monoBRUVs_Metadata_final.csv", row.names = FALSE)
 # }
 
 # Load the magick library
-library(magick)
+
 
 
 # Convert all png files to jpg and output into full_res folder
