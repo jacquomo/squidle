@@ -3,6 +3,7 @@
 
 ## This code assumes you have a folder containing all habitat images called "Habitat" and one metadata csv file that is
 ## structured based on GlobalArchive standards found in the CheckEM user guide https://marine-ecology.shinyapps.io/CheckEM/
+## Example data is provided in 202106_Huon_AMP_BRUV_Metadata_Habitat.zip in this repo
 
 ## Clean up environment
 rm(list=ls())
