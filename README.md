@@ -1,3 +1,7 @@
+This repo is work in progress
+
+Getting BRUV images ready for SQUIDLE+ code and the associated zip file is currently complete. Other R files are work in progress and will require trouble shooting before use!!!
+
 This code base is for:
 
 1) Extracting still images from BOSS, BRUV and other video platforms and formatting for upload into SQUIDLE+ using R. It provides example workflows to create folder structures and image name convention ready for ingestion into R.
