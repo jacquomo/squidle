@@ -5,6 +5,11 @@
 ## structured based on GlobalArchive standards found in the CheckEM user guide https://marine-ecology.shinyapps.io/CheckEM/
 ## Example data is provided in 202106_Huon_AMP_BRUV_Metadata_Habitat.zip in this repo
 
+## To transfer images to IMAS for ingestion into SQUIDLE+. 
+## Use this transfer code:
+## https://www.dropbox.com/request/E4RESrRWjxYtElLWMYKU
+
+
 ## Clean up environment
 rm(list=ls())
 
