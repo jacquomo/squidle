@@ -8,7 +8,7 @@
 ## To transfer images to IMAS for ingestion into SQUIDLE+. 
 ## Use this transfer code:
 ## https://www.dropbox.com/request/E4RESrRWjxYtElLWMYKU
-
+## Please note you are sharing the entire folder structure from Instution down (see below)
 
 ## Clean up environment
 rm(list=ls())
