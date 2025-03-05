@@ -1,12 +1,14 @@
 This repo is work in progress
 
-Getting BRUV images ready for SQUIDLE+ code and the associated zip file is currently complete. Other R files are work in progress and will require trouble shooting before use!!!
+**Getting BRUV images ready for SQUIDLE+ code and the associated zip file is currently complete. Other R files are work in progress and will require trouble shooting before use!!!**
 
 This code base is for:
 
-1) Extracting still images from BOSS, BRUV and other video platforms and formatting for upload into SQUIDLE+ using R. It provides example workflows to create folder structures and image name convention ready for ingestion into R.
+1) Extracting still images from BOSS, BRUV and other video platforms and formatting for upload into SQUIDLE+ using R. 
 
-2) Extracting annotation data from SQUIDLE+ API using R. This repository provides basic API calls to SQUIDLE+ to download annotations and images for summarizing using R.
+2) Formatting imagery, metadata and establishing standardised folder structures ready for ingestion into SQUIDLE+ (getting_bruv_images_ready_SQUIDLE+.R) 
+
+3) Extracting annotation data from SQUIDLE+ API using R. This repository provides basic API calls to SQUIDLE+ to download annotations and images for summarizing using R.
 A full list of API endpoints can be found at https://squidle.org/api/help?template=api_help_page.html
 
 Getting Started:
