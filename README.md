@@ -9,7 +9,9 @@ This code base is for:
 2) Formatting imagery, metadata and establishing standardised folder structures ready for ingestion into SQUIDLE+ (getting_bruv_images_ready_SQUIDLE+.R) 
 
 3) Extracting annotation data from SQUIDLE+ API using R. This repository provides basic API calls to SQUIDLE+ to download annotations and images for summarizing using R.
+NOTE This last code needs updating- will be an R package shortly 
 A full list of API endpoints can be found at https://squidle.org/api/help?template=api_help_page.html
+4) Making interactive maps based on SQUIDLE+ API and Seamap Australia geoserver layers
 
 Getting Started:
 1. Prerequisites
