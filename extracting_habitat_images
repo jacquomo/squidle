@@ -1,16 +1,30 @@
+## Extracting Habitat Stills from BRUV videos
 
-## Extracting Representative Video Snippets in EventMeasure
-
-# This script extracts video snippets for a representative (random) clip using data from EventMeasure software (https://www.seagis.com.au/event.html).
+# This script extracts habitat stills from a bruv (and similar) videos and formats the folder structures, file names and metadata for upload into SQUIDLE+
 #
 # Authors: jacquomo.monk@utas.edu.au, justin.hulls@utas.edu.au
 #
 # Prerequisites:
-# - A folder containing all BRUV video files in a directory named "Converted".
-# - A database export from EventMeasure with the following files in the working directory:
-#   - "\Periods.txt"
-#   - "\Metadata.csv" file structured according to GlobalArchive standards (see: https://marine-ecology.shinyapps.io/CheckEM/).
+# - Your working directory is the folder containing all BRUV video files (subfolders are fine) and metadata
+# - Each video file has the OpCode within the file name (e.g.Beagle_1_1_1278_1279_1278_1.MP4, where 1_1 is the OpCode). 
+#   and if each BRUV drop has multiple videos (e.g. gopros) associated with it, these are numbered video segments are numbered 1 to n at end of video name. 
+#   If this is not the case you will need edit line 144. This section requires customisation for each campaign. Sorry.
+# - A "\Metadata.csv" file structured according to GlobalArchive standards (see: https://marine-ecology.shinyapps.io/CheckEM/).
+#   Additional attributes are required to capture if "left_cam_successful" and "right_cam_successful" cameras recorded successful as y/n. 
+#   We will use the left camera, but if missing, we'll take the right
+
 # - FFmpeg installed (https://www.ffmpeg.org/download.html).
+
+## You have flexibility in naming and folder structures. See https://squidle.org/wiki/general_information/datasources_and_ingesting_from_cloud_repositories
+## BUT once you have defined a folder structure, stick to it as SQUIDLE+ requires you platform structure and naming convenient to be consistent.
+## If uploading using IMAS storage we suggest you stick to the folder structure defined below.
+
+
+## If you do not have your own storage bucket for SQUIDLE+ to work from you can transfer images to IMAS using this transfer code:
+## https://www.dropbox.com/request/E4RESrRWjxYtElLWMYKU
+## Please note you are sharing the entire folder structure from Institution down (see below)
+## All images in the IMAS bucket are FAIR and Open under Creative Commons by Attribution 4.0 International (CC BY 4.0)
+
 
 # Clean up environment
 rm(list=ls())
@@ -20,27 +34,38 @@ library(tidyverse)
 library(readxl)
 library(lubridate)
 library(sf)
+library(leaflet)
+library(magick)
 
 ## 1. Setup Working Directory
-folder_path <- choose.dir() # Navigate to the working folder
+folder_path <- choose.dir() # Navigate to the working folder. Should be the folder containing your correctly named video files. A copy of the metadata should be present in this folder also
 setwd(folder_path)
 getwd()
 
 ## 2. Define Metadata and Attributes
 data.camera_model = "GoPro Hero10" #edit for your cameras
-data.contact.primary ="neville.barrett@utas.edu.au" #add email for your primary contact person
-data.contact.secondary = "jacquomo.monk@utas.edu.au" #add email for your secondary contact person	
-data.funder = "Parks Australia"	#add funder names. If multiple delimit by semicolon
-data.grant_no  = "DNP-MPA-2122-062" #(optional) add relevant grant numbers. If multiple delimit by semicolon
+data.contact.primary ="jacquomo.monk@utas.edu.au" #add email for your primary contact person
+data.contact.secondary = "neville.barrett@utas.edu.au" #add email for your secondary contact person	
+data.funder = "NESP MAC"	#add funder names. If multiple delimit by semicolon
+data.grant_no  = "4.21" #(optional) add relevant grant numbers. If multiple delimit by semicolon
 
 institute = "IMAS" #set this for your institute. should remain the same between uploads
-platform = "IMAS_stereoROV" #set this for each platform format should remain the same between uploads 
+platform = "IMAS_stereoBRUV" #set this for each platform format should remain the same between uploads 
 campaign = "202408_Beagle_AMP" #set this for each campaign. format should remain the same between uploads
-licence = "Creative Commons by Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)" #Set as appropriate 
+licence = "Creative Commons by Attribution 4.0 International (CC BY 4.0)" #Set as appropriate 
+jpgname = "stereoBRUV" #dont change this unless you are working with a different platform
+full_res = "full_res"#dont change this
+thumbnails = "thumbnails" #dont change this
 
-## 3. Setup Folder Structure
-base_dir <- file.path(campaign)
-folders <- c("Highlight_Video", "MaxN_Video", "Representative_Video")
+
+### Set up folder structure
+#### Define the base directory (you can adjust this as needed)
+base_dir <- file.path(institute, platform, campaign)
+
+#### Define the folders to create
+folders <- c("full_res", "thumbnails")
+
+#### Create the folder structure
 for (folder in folders) {
   dir_path <- file.path(base_dir, folder)
   if (!dir.exists(dir_path)) {
@@ -51,45 +76,40 @@ for (folder in folders) {
   }
 }
 
-## 4. Load Marine Parks Shapefile (CAPAD for Australia)
-mpa_url <- "https://geoserver.imas.utas.edu.au/geoserver/seamap/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=seamap%3ASeamapAus_BOUNDARIES_CAPAD&outputFormat=application%2Fjson"
-mpa <- st_read(mpa_url)
-mpa <- mpa[st_is_valid(mpa), ]
 
-## 5. Load Metadata File
-meta <- read.csv(list.files(pattern = "*.csv")) %>%
-  mutate(
-    site = opcode,
-    date_time = date_time,
-    latitude = latitude_dd,
-    longitude = longitude_dd,
-    depth = depth_m, #needs to be a positive
-    depth.zone = case_when(
-      depth_m >= 0 & depth_m < 30 ~ "shallow",
-      depth_m >= 30 & depth_m < 70 ~ "mesophotic",
-      depth_m >= 70 & depth_m < 200 ~ "rariphotic",
-      depth_m >= 200 & depth_m < 700 ~ "upper-slope",
-      depth_m >= 700 & depth_m < 2000 ~ "mid-slope",
-      depth_m >= 2000 & depth_m < 4000 ~ "lower-slope",
-      depth_m >= 4000 & depth_m < 6000 ~ "abyss",
-      depth_m >= 6000 ~ "hadal",
-      TRUE ~ NA_character_
-    ),
-    camera_model = data.camera_model,
-    contact.primary = data.contact.primary,
-    contact.secondary = data.contact.secondary,
-    licence = licence,
-    funder = data.funder,
-    grant.no = data.grant_no
-  ) %>%
-  select("site", "date_time", "latitude":"grant.no") %>%
+## 2.0 Read in metadata and sort out attribute names
+meta<-read.csv(list.files(pattern = "*.csv"))%>% #This assumes you only have one csv in working directory representing metadata
+  mutate(site = opcode,
+         timestamp_start = parse_datetime(date_time) %>%  #convert local time date to UTC
+           with_tz("UTC") %>% 
+           format("%H:%M:%S"),
+         pose.lat = latitude_dd,
+         pose.lon	= longitude_dd,
+         pose.dep = depth_m,
+         pose.data.inclusion_probability = inclusion_probability,
+         data.spatially_balanced	=  ifelse(!is.na(inclusion_probability), "y", "n"), #assign a yes/no based on if there is a inclusion probability
+         data.licence = licence,
+         data.camera_model = data.camera_model,
+         data.contact.primary =  data.contact.primary,
+         data.contact.secondary = data.contact.secondary,
+         data.funder = data.funder,
+         data.grant_no = data.grant_no #optional. remove if not used
+  )%>%
+  mutate(timestamp_start = parse_datetime(date_time))%>%
+  dplyr::select("site","timestamp_start":"data.grant_no","left_cam_number":"right_cam_successful")%>%
+  filter(!( left_cam_successful == 'n' &  right_cam_successful == 'n')) %>%  # Filter out rows where either cam is unsuccessful
+  mutate(habitat.image = paste(site, ifelse(left_cam_successful == 'y', left_cam_number, 
+                                            ifelse(right_cam_successful == 'y', right_cam_number, NA)), sep="_")) %>%  # Join site with right cam if left is unsuccessful, or NA if both are unsuccessful
   glimpse()
 
-## 6. Perform Data Quality Checks
+
+## 3. Perform Data Quality Checks
+## Check for missing values
 missing_values <- meta %>% summarise(across(everything(), ~ sum(is.na(.)))) %>% pivot_longer(everything(), names_to = "Column", values_to = "Missing_Count")
 print("Missing values per column:")
-print(missing_values)
+print(missing_values) # should be zero
 
+## Check for duplicates
 duplicates <- meta %>%
   filter(duplicated(.))
 
@@ -100,109 +120,102 @@ if (nrow(duplicates) > 0) {
   print("No duplicate rows found.")
 }
 
-## 7. Convert Metadata to Spatial Points and Assign MPAs
-meta_sf <- st_as_sf(meta, coords = c("longitude", "latitude"), crs = 4326)
-meta_mpa <- st_join(meta_sf, mpa, left = TRUE) %>%
-  mutate(Name = replace_na(NAME, "Open"), IUCN = replace_na(IUCN, "Open")) %>%
-  select(site, date_time, depth, depth.zone, camera_model, contact.primary, contact.secondary, licence, funder, grant.no, Name, IUCN) %>%
-  rename(MPA.name = Name) %>%
-  as.data.frame() %>%
-  select(!c(geometry)) %>%
-  glimpse()
-
-## 8. Extract Frame Rates from Video Files
-video_dir <- file.path(getwd(), "Converted")
-video_files <- list.files(video_dir, pattern = "\\.(MP4|AVI)$", full.names = TRUE, ignore.case = TRUE)
-
-get_video_fps <- function(video_path) {
-  command <- paste("ffprobe -i", shQuote(video_path), "-show_entries stream=r_frame_rate -v quiet -of csv=\"p=0\"")
-  fps <- system(command, intern = TRUE)
-  fps_values <- as.numeric(unlist(strsplit(fps, "/")))
-  fps_rate <- fps_values[1] / fps_values[2]
-  return(fps_rate)
-}
-
-fps_table <- data.frame(Video = video_files, FPS = sapply(video_files, get_video_fps)) %>% mutate(Filename = basename(Video)) %>% glimpse()
-
-## 9. Read EventMeasure Period File for Representative Events
-# List files that contain "Period" and end with ".txt".
-file_path <- list.files(pattern = "Period.*\\.txt$", full.names = TRUE) %>%
-  enframe(name = NULL, value = "file_path") %>%
-  pull(file_path)
-
-# Check if any file was found and read it
-if (length(file_path) > 0) {
-  Periods <- read_delim(file_path, delim = "\t") 
-  head(Periods)
+### Check for any empty or negative depth values
+if ("pose.dep" %in% colnames(meta)) {
+  depth_issues <- meta %>%
+    filter(is.na(pose.dep) | pose.dep < 0)
+  
+  if (nrow(depth_issues) > 0) {
+    print("Rows with empty or negative depth values in 'Depth':")
+    print(depth_issues)
+  } else {
+    print("No empty or negative depth values in 'Depth'.")
+  }
 } else {
-  cat("No file with 'Period' in the name was found.")
+  print("Column 'Depth' not found in metadata.")
 }
 
-## 10. Format start time to set extraction time point based on frame
-Period.df <- Periods %>%#----
-  dplyr::filter(PeriodIndex == 0)%>%#str_detect(Period, regex("bot", ignore_case = TRUE))) %>% # Filter based on bottom time #May need to change
-  mutate(site = OpCode)%>%#str_extract(Filename, "\\b(?:\\d+_\\d+|EXP_\\d+)\\b")) %>%     # Extract 'Site' (matches patterns like "EXP_2" or "1_1")
-  distinct(site, .keep_all = TRUE) %>%      # Have just one video per drop
-  mutate(
-    clip_start_in_seconds = (TimeStart*60)+180, # take a image @ 3mins into bottom time 
-    # clip_start_in_seconds = (round(Time_in_seconds )),  # Start 10 seconds before MaxN
-    clip_start_in_seconds = ifelse(clip_start_in_seconds < 0, 0, clip_start_in_seconds) # Prevent negative times
-  ) %>%
-  glimpse()
+## Plot metadata on map to make sure it looks ok
+## Create a Leaflet map
+leaflet(meta) %>%
+  addTiles() %>%
+  addMarkers(lng = ~pose.lon, lat = ~pose.lat, label = ~site)
 
-## 11. Join Period and video files to get the path
+
+## 4. Extract Frame Rates from MPG4 or AVI Video Files including in Subfolders
+video_dir <- file.path(getwd()) # can change this if you are working from different folders
+
+## Function for keeping only even camera number (right cams) and first video for each drop
+video_files <- list.files(
+  video_dir, 
+  pattern = "_[0-9]+_2\\.MP4$", #keeps just the second video named with an "_2" at end. If your naming conversion differs to this you will need to edit this line
+  full.names = TRUE, 
+  ignore.case = TRUE, 
+  recursive = TRUE #in case you have subfolders
+)
+
+
+## 5. Join metadata with list of files. You will need to customise this section depending on your video file naming convension.
 combined <- as.data.frame(video_files) %>%
-  mutate(Filename = str_extract(video_files, "[^/]+$")) %>%
-  mutate(site = str_extract(Filename, "(?<=_)[A-Z](_\\d+)(?=_)")) %>%  # Extracts "B_23"  # Extracts "B_23" or similar patterns. Edit as needed
-  # mutate(site = str_extract(Filename, "(?<=_)(\\d+_\\d+)(?=_)")) %>%  # Extracts "1_1" pattern. Edit as needed
-  right_join(meta_mpa, by = "site") %>%             # Right join to ensure all Video parts rows are kept
-  dplyr::select(!Filename) %>%
-  right_join(Period.df, by = "site")%>%
-  glimpse()
+  mutate(
+    Filename = str_extract(video_files, "[^/]+$"),  # Extracts the filename
+    site = str_extract(Filename, "Capt_\\d+|Beagle_\\d+(?:_\\d+)?"),  # You will likely need to edit this line of code. Extracts "Capt_5", "B1", or "B165_1"
+    site = ifelse(str_detect(site, "^Capt_"), site, str_replace(site, "^Beagle_", "B")),  # Same here. You will need to edit this line of code. At present it keeps "B" at the start
+    site = str_replace(site, "(B\\d+)_\\d{4}$", "\\1"),  # Same here. You will need to edit this line of code. Removes the 4-digit number after the first underscore
+    habitat.image = paste(site, str_extract(Filename, "(\\d{4})(?=_2\\.MP4$)"),sep="_")  # Same here. You will need to edit this line of code.Extracts the four-digit number before "_2.MP4" and merges with site
+  ) %>%
+  select(!site)%>%
+  right_join(meta, by = "habitat.image") %>%  # Left join to ensure all Video parts rows are kept
+  mutate(clip_start_in_seconds = 2)%>% # take a image @ 2seconds into bottom time of the second video 
+  mutate(image.name = paste(campaign,platform,habitat.image, sep= "_"))%>%
+  # filter(image.name %in% c("202408_Beagle_AMP_IMAS_stereoBRUV_B8_6_1280","202408_Beagle_AMP_IMAS_stereoBRUV_B12_2_1280","202408_Beagle_AMP_IMAS_stereoBRUV_B19_3_1258","202408_Beagle_AMP_IMAS_stereoBRUV_B31_5_1280"))%>% #Use this to subset if you need to redo some of the images
+  glimpse()       
 
 
-## 12. Setup output folder and path for video clips 
+## Check for missing values
+missing_values <- combined %>% summarise(across(everything(), ~ sum(is.na(.)))) %>% pivot_longer(everything(), names_to = "Column", values_to = "Missing_Count")
+print("Missing values per column:")
+print(missing_values) # should be zero
+
+## Check that we have the same number of rows in metadata as combined df
+dim(meta)
+dim(combined)
+
+## 6. Iterate over each row of 'combined' to process extract habitat stills
 #Ensure the output directory exists
-output_dir <- paste(getwd(),campaign,"Representative_Video", sep= "/")
-output_dir
+full_res_folder <- paste(getwd(),base_dir,"full_res", sep= "/")
+full_res_folder
 
-if (!dir.exists(output_dir_rep)) {
-  dir.create(output_dir_rep, recursive = TRUE)
+if (!dir.exists(full_res_folder)) {
+  dir.create(full_res_folder, recursive = TRUE)
 }
 
-## 13. Iterate over each row of 'combined' to process the video clips
+
+# Run extraction
 for (i in 1:nrow(combined)) {
   
-  # Get the video file path and name
-  video_file <- combined$FilenameStart[i]
-  video_full_path <- file.path(video_dir, video_file)  # Correct path construction
+  # Get the full video file path
+  video_full_path <- combined$video_files[i]
   
-  # Check if the file exists (to avoid errors)
+  # Check if the file exists
   if (!file.exists(video_full_path)) {
     cat("File not found:", video_full_path, "\n")
-    next  # Skip to next iteration if file doesn't exist
+    next
   }
   
-  # Get the start time for the clip
-  clip_start_time <- combined$clip_start_in_seconds[i]
+  # Get the timestamp in seconds for the still image
+  still_time <- combined$clip_start_in_seconds[i]
   
-  # Generate the output video file name using the format: Filename_Comment_Time.mp4
-  clean_video_file <- gsub("\\.[^.]+$", "", video_file)  # Remove video extension from the filename
+  # Use image.name as the output file name
+  output_image_name <- paste0(combined$image.name[i], ".jpg")
+  output_image_path <- file.path(full_res_folder, output_image_name)
   
-  # Use Time to ensure a unique filename
-  output_video_name <- paste0(clean_video_file, "_representative_", round(combined$TimeStart[i],2), ".MP4")
-  output_video_path <- file.path(output_dir, output_video_name)
-  
-  # Create the FFmpeg command for video clip extraction
-  ffmpeg_command <- paste0(
-    "ffmpeg -i \"", normalizePath(video_full_path, winslash = "/"), "\"",  # Input video file
-    " -ss ", clip_start_time,               # Start time for the clip
-    " -an ",                              # Exclude audio
-    " -t 30 ",                              # Duration of the clip (30 seconds)
-    " -c:v libx264 -preset veryfast -crf 23 ",   # Compression settings cf ranges from 0-51 with lower better. 17-18 is visually lossless, but large file size. 19-23 good for most general uses
-    " -profile:v high -level 4.2 ", #improves compatibility with web players
-    " -movflags +faststart ", #places metadata at the beginning for faster playback
-    "\"", normalizePath(output_video_path, winslash = "/"), "\""  # Output video file path
+  # FFmpeg command to extract a still image
+  ffmpeg_command <- paste(
+    "ffmpeg -ss", still_time,
+    "-i", shQuote(normalizePath(video_full_path, winslash = "/")),
+    "-frames:v 1 -q:v 1",
+    shQuote(normalizePath(output_image_path, winslash = "/"))
   )
   
   # Execute the FFmpeg command and capture the output
@@ -213,29 +226,254 @@ for (i in 1:nrow(combined)) {
   cat(ffmpeg_output, sep = "\n")
   
   # Check if the output file was created and has a valid size
-  if (file.exists(output_video_path) && file.info(output_video_path)$size > 1024) {
-    cat("Successfully created:", output_video_path, "\n")
+  if (file.exists(output_image_path) && file.info(output_image_path)$size > 1024) {
+    cat("Successfully created:", output_image_path, "\n")
   } else {
-    cat("Failed to create a valid output file:", output_video_path, "\n")
+    cat("Failed to create a valid output file:", output_image_path, "\n")
   }
 }
 
-## 14. Format metadata and write out for highlight videos
-# Get highlight video names and match back to metadata
-rep_files <- list.files(output_dir, pattern = "\\.(MP4)$", full.names = TRUE, ignore.case = TRUE)
+##IMPORTANT. Make sure you manually check the output folder to ensure that you images are ok and there are no out of water shots, etc
 
-# Extract filenames without the path
-rep_df <- data.frame(Filename.H = basename(rep_files), stringsAsFactors = FALSE)%>%
-  mutate(site = str_extract(Filename.H, "(?<=_)[A-Z](_\\d+)(?=_)")) %>%  # Extracts "B_23"  # Extracts "B_23" or similar patterns. Edit as needed
-  # mutate(site = str_extract(Filename, "(?<=_)(\\d+_\\d+)(?=_)")) %>%  # Extracts "1_1" pattern. Edit as needed
+## 7. Now lets do some checks and move files into folders for SQUIDLE+ 
+#### Note that this naming pattern needs to be standard for your dataset between campaigns.
+### Now lets join renamed jpg images to metadata for SQ+
+final.metadata <- list.files(path = full_res_folder, pattern = "\\.jpg$", ignore.case = TRUE, full.names = TRUE, recursive = FALSE) %>%
+  as.data.frame() %>%
+  rename(image.path = ".") %>%
+  mutate(
+    Filename = str_extract(image.path, "[^/]+$"),  # Extracts the filename
+    site = str_extract(Filename, "Capt_\\d+|B\\d+(?:_\\d+)?"),  # Extracts Capt_### or B_### or B_###_### # You will likely need to edit this line of code. Extracts site from image name eg. "Capt_5", "B1", or "B165_1"
+    site = str_replace(site, "_\\d{4}$", ""),  # Removes trailing _#### if present #  You will likely need to edit this line of code. 
+    Filename = str_remove(Filename, "\\.jpg$"),
+    key = Filename
+    ) %>%
+  left_join(combined, by = 'site') %>%
+  dplyr::select("key","site","timestamp_start","pose.lat","pose.lon","pose.dep":"data.grant_no")%>% #note you may need to change selection if you dont have a grant number
   glimpse()
 
-# Combine with combined metadata df
-final.meta<-combined%>%
-  left_join(rep_df, by= "site")%>%
-  dplyr::select(site:IUCN,Filename.H)%>%
-  rename(filename=Filename.H)%>%
-  mutate(institute=institute)%>%
+
+
+# ### Write out final metadata for later
+# write.csv(final.metadata, file.path(file.path(getwd(), base_dir), "202106_Huon_AMP_BRUV_Metadata_formatted_final.csv"), row.names = FALSE, na = "") ##change name as needed leaving Metadata_formatted. Optional save if you need it
+
+## 8.0 Now create thumbnails
+### Set thumbnail folder
+thumbnails_folder <- file.path(getwd(),base_dir, "thumbnails")
+thumbnails_folder
+
+### Loop through the jpg files, resize, and save as thumbnails
+for (jpg_file in jpg_files) {
+  ## Read the image
+  img <- image_read(jpg_file)
+  
+  ## Calculate the thumbnail dimensions to ensure a maximum height of 350px
+  original_width <- image_info(img)$width
+  original_height <- image_info(img)$height
+  
+  thumbnail_height <- min(350, original_height)  # Ensure thumbnail_height is a maximum of 350px
+  thumbnail_width <- (thumbnail_height / original_height) * original_width  # Maintain the original aspect ratio
+  
+  ## Resize the image
+  img_thumbnail <- image_scale(img, geometry = paste0(thumbnail_width, "x", thumbnail_height, "!"))
+  
+  ## Extract the file name without extension
+  file_name <- tools::file_path_sans_ext(basename(jpg_file))
+  
+  ## Save the thumbnail in the output folder
+  thumbnail_output_path <- file.path(thumbnails_folder, paste0(file_name, ".jpg"))
+  image_write(img_thumbnail, path = thumbnail_output_path, format = "jpeg")
+}
+
+
+## 9.0 Now let's make deployment folder for each deployment, move these images into these folders and split metadata
+### Quick checks before moving files to deployment folders
+#### 9.1 Check site names metadata
+unique_sites <- unique(final.metadata$site)
+print(unique_sites)
+
+### 9.2 Check number of files in full res and thumbnail folders - should have same number of files in each
+#### Get list of jpg files in each folder
+full_res_files <- list.files(full_res_folder, pattern = "\\.jpg$", full.names = FALSE)
+thumbnails_files <- list.files(thumbnails_folder, pattern = "\\.jpg$", full.names = FALSE)
+
+#### Count number of files in each folder and get file names
+file_counts <- tibble(
+  folder = c("Full Resolution", "Thumbnails"),
+  file_count = c(length(full_res_files), length(thumbnails_files))
+)
+
+#### Get file names for comparison
+file_names <- tibble(
+  full_res_files = full_res_files,
+  thumbnails_files = thumbnails_files
+)
+
+##### Check if they have the same number of files
+if(length(full_res_files) == length(thumbnails_files)) {
+  message("Both folders have the same number of jpg files.")
+} else {
+  message("The number of jpg files in each folder is different.")
+}
+
+##### Check if file names match
+if(setequal(full_res_files, thumbnails_files)) {
+  message("File names match between the folders.")
+} else {
+  message("File names do not match between the folders.")
+} 
+
+
+### 9.3 Now move images from full_res to subfolders in deployment folders
+#### Extract site from 'key' column in 'metadata'
+unique_imgs <- final.metadata %>%
+  dplyr::select(site, key) %>%
   glimpse()
 
-write.csv(final.meta, file = file.path(output_dir, paste0(campaign, "_", "Representative_Metadata.csv")), row.names = FALSE)
+#### Move all full_res and thumbnail jpgs from full_res and thumbnails folders to full_res and thumbnails subfolders in each deployment 
+path_to_folder <- file.path(getwd(), base_dir)
+
+for (i in 1:nrow(unique_imgs)) {
+  site <- unique_imgs$site[i]
+  key <- unique_imgs$key[i]
+  
+  site_folder <- file.path(path_to_folder, site)
+  full_res_subfolder <- file.path(site_folder, "full_res")
+  thumbnails_subfolder <- file.path(site_folder, "thumbnails")
+  
+  ## Create site, full_res, and thumbnails folders if they don't exist
+  if (!dir.exists(site_folder)) {
+    dir.create(site_folder, recursive = TRUE)
+  }
+  if (!dir.exists(full_res_subfolder)) {
+    dir.create(full_res_subfolder, recursive = TRUE)
+  }
+  if (!dir.exists(thumbnails_subfolder)) {
+    dir.create(thumbnails_subfolder, recursive = TRUE)
+  }
+  
+  ## Move only the matching full_res JPG file
+  full_res_file <- file.path(full_res_folder, paste0(key, ".jpg"))
+  if (file.exists(full_res_file) && !file.exists(file.path(full_res_subfolder, basename(full_res_file)))) {
+    file.rename(full_res_file, file.path(full_res_subfolder, basename(full_res_file)))
+  }
+  
+  ## Move only the matching thumbnail JPG file
+  thumbnail_file <- file.path(thumbnails_folder, paste0(key, ".jpg"))
+  if (file.exists(thumbnail_file) && !file.exists(file.path(thumbnails_subfolder, basename(thumbnail_file)))) {
+    file.rename(thumbnail_file, file.path(thumbnails_subfolder, basename(thumbnail_file)))
+  }
+}
+
+# final.metadata$key <-str_replace(final.metadata$key, "B(\\d+)_", "B_\\1_")
+# final.metadata$site  <-str_replace(final.metadata$site, "\\bB(\\d+)", "B_\\1")
+
+
+
+#### 9.4 Now let's split metadata csv into each deployment folder
+for (site in unique_sites) {
+  ## Subset final metadata for the current site
+  site_metadata <- final.metadata[final.metadata$site == site, ]
+  
+  ## Remove the site column
+  site_metadata <- site_metadata[, !names(site_metadata) %in% "site"]
+  
+  ## Define the file name and path
+  file_name <- paste0(campaign, "_", platform, "_", site, "_Metadata.csv")
+  file_path <- file.path(path_to_folder, site, file_name)
+  
+  # ## Create the directory if it doesn't exist
+  # dir.create(dirname(file_path), recursive = TRUE, showWarnings = FALSE)
+  
+  ## Write the subsetted metadata to a CSV file
+  write.csv(site_metadata, file_path, row.names = FALSE)
+}
+
+### 10 Run some checks to makes sure each deployment folder has correct number of files 
+#### Function to count files by type in a directory
+count_files_by_type <- function(dir) {
+  files <- list.files(dir, full.names = TRUE, recursive = TRUE)
+  file_types <- tools::file_ext(files)
+  file_types <- ifelse(file_types == "", "No Extension", file_types)
+  file_type_counts <- table(file_types)
+  data.frame(File_Type = names(file_type_counts), Count = as.numeric(file_type_counts))
+}
+
+#### Get a list of all directories in the specified folder
+dirs <- list.dirs(path_to_folder, full.names = TRUE, recursive = TRUE)
+
+#### Loop through each directory and count the number of files by type
+files_count_by_type <- lapply(dirs, count_files_by_type)
+
+#### Create a data frame with the folder names and file counts by type
+summary_df <- data.frame(
+  Folder = rep(dirs, sapply(files_count_by_type, nrow)),
+  do.call(rbind, files_count_by_type))%>%
+  view()
+
+### 11 Do some cleaning to delete old files folders
+#### Define the pattern for the CSV file to delete
+csv_pattern <- "final.csv$"  # This ensures it ends with 'final.csv'
+
+#### Get a list of CSV files that match the pattern in the output folder
+csv_files <- list.files(path_to_folder, pattern = csv_pattern, full.names = TRUE)
+
+#### Delete the matched CSV file(s)
+for (csv_file in csv_files) {
+  if (file.exists(csv_file)) {
+    file.remove(csv_file)
+    cat("Deleted CSV file:", csv_file, "\n")
+  } else {
+    cat("CSV file does not exist:", csv_file, "\n")
+  }
+}
+
+#### Delete the full_res and thumbnails folders
+folders_to_delete <- c("full_res", "thumbnails")
+for (folder in folders_to_delete) {
+  folder_path <- file.path(path_to_folder, folder)
+  if (dir.exists(folder_path)) {
+    unlink(folder_path, recursive = TRUE, force = TRUE)
+    cat("Deleted folder:", folder_path, "\n")
+  } else {
+    cat("Folder does not exist:", folder_path, "\n")
+  }
+}
+
+
+# 
+# # Base path
+# base_path <- "R:/TAFI/Data/CERF/BRUVS Video/202501_BeagleAMP/03 Converted Videos/IMAS/IMAS_stereoBRUV/202408_Beagle_AMP"
+# 
+# # List all directories under base_path
+# all_dirs <- list.dirs(base_path, recursive = FALSE, full.names = TRUE)
+# 
+# # Identify directories that start with "B" (e.g., B123, B456)
+# dirs_to_rename <- all_dirs[basename(all_dirs) %>% str_detect("^B[^_]")]
+# 
+# # Rename each one
+# for (dir in dirs_to_rename) {
+#   dir_name <- basename(dir)
+#   new_name <- str_replace(dir_name, "^B", "B_")
+#   new_path <- file.path(dirname(dir), new_name)
+#   
+#   message("Renaming: ", dir, " -> ", new_path)
+#   file.rename(dir, new_path)
+# }
+# 
+# 
+# # Find all .jpg files recursively
+# jpg_files <- list.files(base_path, pattern = "\\.jpg$", recursive = TRUE, full.names = TRUE)
+# 
+# # Filter only those that contain B followed directly by a digit (e.g., B1, B23)
+# jpgs_to_rename <- jpg_files[str_detect(basename(jpg_files), "B\\d")]
+# 
+# # Loop through and rename
+# for (file in jpgs_to_rename) {
+#   file_name <- basename(file)
+#   new_file_name <- str_replace(file_name, "B(\\d)", "B_\\1")
+#   new_file_path <- file.path(dirname(file), new_file_name)
+#   
+#   message("Renaming: ", file_name, " -> ", new_file_name)
+#   file.rename(file, new_file_path)
+# }
