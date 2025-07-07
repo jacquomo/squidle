@@ -66,7 +66,7 @@ meta<-read.csv(list.files(pattern = "*.csv"))%>% #This assumes you only have one
   mutate(site = opcode,
          timestamp_start = parse_datetime(date_time) %>%  #convert time date to UTC
            with_tz("UTC") %>% 
-           format("%H:%M:%S"),
+           format("%Y-%m-%dT%H:%M:%SZ"),  # Format to ISO 8601
          pose.lat = latitude_dd,
          pose.lon	= longitude_dd,
          pose.dep = depth_m,
