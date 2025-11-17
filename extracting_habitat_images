@@ -274,9 +274,9 @@ for (jpg_file in jpg_files) {
   thumbnail_height <- min(350, original_height)  # Ensure thumbnail_height is a maximum of 350px
   thumbnail_width <- (thumbnail_height / original_height) * original_width  # Maintain the original aspect ratio
   
-  ## Resize the image
-  img_thumbnail <- image_scale(img, geometry = paste0(thumbnail_width, "x", thumbnail_height, "!"))
-  
+ ## Resize the image
+  img_thumbnail <- image_scale(img, geometry = paste0(round(thumbnail_width), "x", round(thumbnail_height)))
+ 
   ## Extract the file name without extension
   file_name <- tools::file_path_sans_ext(basename(jpg_file))
   
